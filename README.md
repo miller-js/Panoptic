@@ -2,6 +2,7 @@
 Coming soon
 
 The vision:
+'''
                 Windows/Linux \
                       │ \
                   Filebeat \
@@ -27,3 +28,4 @@ The vision:
       ┌───────────────┴───────────────┐ \
       ▼                               ▼ \
    React UI                     External API \
+'''
