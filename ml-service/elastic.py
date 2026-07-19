@@ -22,3 +22,22 @@ class ElasticClient:
 
     def test_connection(self):
         return self.es.info()
+
+    def get_latest_logs(self, size=10):
+    # Gets only the last 10 logs, returns them as
+        response = self.es.search(
+            index="filebeat-*",
+            size=size,
+            sort=[
+                {
+                    "@timestamp": {
+                        "order": "desc"
+                    }
+                }
+            ],
+            query={
+                "match_all": {}
+            }
+        )
+
+        return [hit["_source"] for hit in response["hits"]["hits"]]

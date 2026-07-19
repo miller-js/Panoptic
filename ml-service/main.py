@@ -14,4 +14,7 @@ from elastic import ElasticClient
 
 elastic = ElasticClient()
 
-print(elastic.test_connection())
+logs = elastic.get_latest_logs()
+
+for log in logs:
+    print(log.keys())
