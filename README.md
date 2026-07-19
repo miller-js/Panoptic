@@ -1,8 +1,7 @@
 # Panoptic
 Coming soon
 
-The vision:
-'''
+The vision: ```
                 Windows/Linux \
                       │ \
                   Filebeat \
@@ -28,4 +27,4 @@ The vision:
       ┌───────────────┴───────────────┐ \
       ▼                               ▼ \
    React UI                     External API \
-'''
+```
