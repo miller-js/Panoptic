@@ -1,7 +1,8 @@
 # Panoptic
 Coming soon
 
-The vision: ```
+The vision: 
+```
                 Windows/Linux \
                       │ \
                   Filebeat \
