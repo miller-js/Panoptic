@@ -24,7 +24,8 @@ class ElasticClient:
         return self.es.info()
 
     def get_latest_logs(self, size=10):
-    # Gets only the last 10 logs, returns them as
+    # Gets only the last 10 logs, returns them as a list of dictionaries,
+    # each being a log with only the source_ field.
         response = self.es.search(
             index="filebeat-*",
             size=size,
