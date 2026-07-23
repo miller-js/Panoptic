@@ -42,3 +42,17 @@ class ElasticClient:
         )
 
         return [hit["_source"] for hit in response["hits"]["hits"]]
+
+    def get_logs_by_type(self, audit_type, size=100):
+        response = self.es.search(
+            index="filebeat-*",
+            size=size,
+            sort=[{"@timestamp": {"order": "desc"}}],
+            query={
+                "match": {
+                    "message": f"type={audit_type}"
+                }
+            }
+        )
+
+        return [hit["_source"] for hit in response["hits"]["hits"]]

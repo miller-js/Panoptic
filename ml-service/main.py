@@ -10,16 +10,31 @@ while True:
     sleep(5)
 '''
 from elastic import ElasticClient
-from preprocess import extract_features
+from parser import parse_message
+from features import engineer_features
 
-elastic = ElasticClient()
 
-logs = elastic.get_latest_logs(size=20)
+def main():
 
-# log = logs[0]
-# print("Before extract features: ")
-# print(log)
+    elastic = ElasticClient()
 
-for log in logs:
-    features = extract_features(log)
-    print(features)
+    logs = elastic.get_latest_logs(size=20)
+
+    for log in logs:
+
+        # Step 1: Parse the raw Auditd message
+        parsed = parse_message(log["message"])
+
+        # Save the parsed data inside the log
+        log["parsed"] = parsed
+
+        # Step 2: Engineer ML features
+        features = engineer_features(log)
+
+        # Step 3: Display them
+        print("--------------------------------")
+        print(features)
+
+
+if __name__ == "__main__":
+    main()
