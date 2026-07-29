@@ -1,98 +1,114 @@
 from datetime import datetime
 
-def engineer_features(log):
-    """
-    Converts an Elasticsearch Auditd log into a feature vector
-    that can later be fed into an ML model.
-    """
 
-    # Raw parsed audit fields
+def engineer_features(log):
+
     parsed = log["parsed"]
 
     timestamp = log.get("@timestamp")
     hostname = log.get("host", {}).get("hostname")
 
-    # -------------------------
-    # Time Features
-    # -------------------------
+    # -----------------
+    # Time
+    # -----------------
 
-    hour = None
-    day_of_week = None
-    is_weekend = False
-    is_business_hours = False
+    hour = 0
+    day = 0
+    weekend = 0
+    business = 0
 
     if timestamp:
         dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
 
         hour = dt.hour
-        day_of_week = dt.weekday()      # Monday = 0
+        day = dt.weekday()
 
-        is_weekend = day_of_week >= 5
-        is_business_hours = 8 <= hour <= 17
+        weekend = int(day >= 5)
+        business = int(8 <= hour <= 17)
 
-    # -------------------------
-    # User Features
-    # -------------------------
+    # -----------------
+    # User
+    # -----------------
 
     uid = parsed.get("uid")
+
+    try:
+        uid = int(uid)
+    except:
+        uid = -1
+
     auid = parsed.get("auid")
 
-    is_root = uid == "0"
+    try:
+        auid = int(auid)
+    except:
+        auid = -1
 
-    # -------------------------
-    # Process Features
-    # -------------------------
+    is_root = int(uid == 0)
+
+    # -----------------
+    # Process
+    # -----------------
 
     command = parsed.get("comm")
+
     executable = parsed.get("exe")
 
     command_length = len(command) if command else 0
 
-    executable_depth = 0
+    executable_depth = executable.count("/") if executable else 0
 
-    if executable:
-        executable_depth = executable.count("/")
-
-    # -------------------------
-    # Event Features
-    # -------------------------
+    # -----------------
+    # Event
+    # -----------------
 
     audit_type = parsed.get("type")
 
     result = parsed.get("res")
 
-    success = result == "success"
+    success = int(result == "success")
 
-    # -------------------------
-    # Feature Vector
-    # -------------------------
+    # -----------------
+    # Numeric ML vector
+    # -----------------
 
-    features = {
+    ml = [
 
-        # Time
-        "hour": hour,
-        "day_of_week": day_of_week,
-        "is_weekend": is_weekend,
-        "is_business_hours": is_business_hours,
+        hour,
+        day,
+        weekend,
+        business,
 
-        # Host
+        uid,
+        auid,
+        is_root,
+
+        command_length,
+        executable_depth,
+
+        success
+    ]
+
+    # -----------------
+    # Human-readable info
+    # -----------------
+
+    display = {
+
         "hostname": hostname,
 
-        # User
-        "uid": uid,
-        "auid": auid,
-        "is_root": is_root,
-
-        # Process
         "command": command,
-        "command_length": command_length,
-        "executable": executable,
-        "executable_depth": executable_depth,
 
-        # Event
+        "executable": executable,
+
         "audit_type": audit_type,
-        "result": result,
-        "success": success
+
+        "result": result
     }
 
-    return features
+    return {
+
+        "ml": ml,
+
+        "display": display
+    }
