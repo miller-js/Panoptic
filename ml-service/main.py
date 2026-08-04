@@ -1,14 +1,26 @@
 from elastic import ElasticClient
 from predict import Predictor
+from features import engineer_features
+from parser import parse_message
 
 elastic = ElasticClient()
 
 predictor = Predictor()
 
-logs = elastic.get_latest_logs(size=10)
+while True:
 
-for log in logs:
+    logs = elastic.get_latest_logs()
 
-    result = predictor.predict(log)
+    for log in logs:
 
-    print(result)
+        prediction, score = predictor.predict(log)
+
+        # New prediction log is stored in Elasticsearch
+        elastic.store_prediction(
+            original_log=log,
+            prediction=prediction,
+            risk_score=score,
+            model="IsolationForest-v1"
+        )
+    
+    time.sleep(300)

@@ -1,16 +1,10 @@
 '''
 This file knows everything about Elasticsearch.
-
-get_new_logs()
-
-store_alert()
-
-connect()
-
 None of the other files need to care how Elasticsearch works
 '''
 
 from elasticsearch import Elasticsearch
+from datetime import datetime, timezone
 
 # Represent Elasticsearch as a class
 class ElasticClient:
@@ -56,3 +50,20 @@ class ElasticClient:
         )
 
         return [hit["_source"] for hit in response["hits"]["hits"]]
+
+    def store_prediction(self, original_log, prediction, risk_score,
+                         confidence=None, model="baseline"):
+
+        document = {
+            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "model": model,
+            "prediction": prediction,
+            "risk_score": risk_score,
+            "confidence": confidence,
+            "log": original_log
+        }
+
+        return self.es.index(
+            index="panoptic-predictions",
+            document=document
+        )

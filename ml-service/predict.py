@@ -32,5 +32,5 @@ class Predictor:
 
             "risk_score": float(risk_score),
 
-            "features": features["display"]
+            #"features": features["display"]
         }
