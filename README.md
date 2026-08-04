@@ -29,3 +29,10 @@ The vision:
       ▼                               ▼
    React UI                     External API
 ```
+
+Future:
+- YARA/Detection Rule Engine
+- MITRE ATT&CK tagging
+- CVSS-style risk scoring
+- GeoIP mapping
+- Authentication and Encryption (TLS)
