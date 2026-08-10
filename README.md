@@ -14,8 +14,8 @@ The vision:
       ┌───────────────┼────────────────┐
       │               │                │
       ▼               ▼                ▼
- Python ML      Rule Engine      Threat Intel
-  Service        (future)          (future)
+  Python ML      MITRE ATT&CK     CVSS scores
+   Service        (future)          (future)
       │               │                │
       └───────────────┼────────────────┘
                       ▼
@@ -31,7 +31,6 @@ The vision:
 ```
 
 Future:
-- YARA/Detection Rule Engine
 - MITRE ATT&CK tagging
 - CVSS-style risk scoring
 - GeoIP mapping
