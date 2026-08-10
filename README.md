@@ -1,4 +1,4 @@
-# Panoptic
+# Panoptic (AI-Powered SIEM Platform)
 Coming soon
 
 The vision: 
