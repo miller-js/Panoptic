@@ -1,11 +1,11 @@
-# Panoptic (AI-Powered SIEM Platform)
-Coming soon
+# Panoptic (AI-Powered SIEM Platform) | Coming Soon
+This project is for developing my security-focused software engineering skills, and to learn key concepts in the industry.
 
 The vision: 
 ```
                 Windows/Linux
                       │
-                  Filebeat
+                   Filebeat
                       │
                       ▼
                Elasticsearch
@@ -19,19 +19,23 @@ The vision:
       │               │                │
       └───────────────┼────────────────┘
                       ▼
-              Elasticsearch
-      (enriched alerts & detections)
+                Elasticsearch
+        (enriched alerts & detections)
                       │
                       ▼
                  Go REST API
                       │
       ┌───────────────┴───────────────┐
       ▼                               ▼
-   React UI                     External API
+   React UI                      External API
 ```
 
 Future:
-- MITRE ATT&CK tagging
-- CVSS-style risk scoring
-- GeoIP mapping
-- Authentication and Encryption (TLS)
+- [ ] Polished ETL service
+    - [ ] MITRE ATT&CK tagging
+    - [ ] CVSS-style risk scoring
+    - [ ] Verbose and actionable alerts using LLM
+- [ ] End-to-end encryption and authentication (TLS)
+- [ ] Polished API and dashboard
+    - [ ] Live WebSocket updates
+- [ ] Kubernetes deployment in AWS
