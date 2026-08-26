@@ -1,5 +1,4 @@
-elasticsearch
-datetime
+elasticsearch>=8.18.0,<9.0.0
 scikit-learn
 joblib
 fastapi

@@ -1,3 +1,5 @@
+import time
+
 from elastic import ElasticClient
 from predict import Predictor
 from features import engineer_features
@@ -9,17 +11,17 @@ predictor = Predictor()
 
 while True:
 
-    logs = elastic.get_latest_logs()
+    logs = elastic.get_unprocessed_logs(size=1000)
 
     for log in logs:
 
-        prediction, score = predictor.predict(log)
+        result = predictor.predict(log)
 
         # New prediction log is stored in Elasticsearch
         elastic.store_prediction(
             original_log=log,
-            prediction=prediction,
-            risk_score=score,
+            prediction=result["prediction"],
+            risk_score=result["risk_score"],
             model="IsolationForest-v1"
         )
     

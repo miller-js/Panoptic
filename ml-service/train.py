@@ -3,7 +3,7 @@ import joblib
 from sklearn.ensemble import IsolationForest
 
 from elastic import ElasticClient
-from parser import parse_message
+from parser import parse_message, extract_raw_audit_text
 from features import engineer_features
 
 
@@ -15,7 +15,7 @@ X = []
 
 for log in logs:
 
-    parsed = parse_message(log["message"])
+    parsed = parse_message(extract_raw_audit_text(log))
 
     log["parsed"] = parsed
 

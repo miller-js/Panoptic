@@ -1,6 +1,6 @@
 import joblib
 
-from parser import parse_message
+from parser import parse_message, extract_raw_audit_text
 from features import engineer_features
 
 
@@ -12,7 +12,7 @@ class Predictor:
 
     def predict(self, log):
 
-        parsed = parse_message(log["message"])
+        parsed = parse_message(extract_raw_audit_text(log))
 
         log["parsed"] = parsed
 
