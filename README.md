@@ -45,15 +45,14 @@ each component's own `Dockerfile` builds that service.
 ## Status
 
 The full pipeline above is built and working end-to-end against a real dataset
-(~320k Linux auditd documents). See [`CLAUDE.md`](CLAUDE.md) for the detailed
-history of issues found and fixed while getting it there.
+(~320k Linux auditd documents).
 
 Not yet built:
 
 - [ ] MITRE ATT&CK tagging and CVSS-style risk scoring
 - [ ] LLM-generated, verbose/actionable alert summaries
 - [ ] End-to-end encryption and authentication (Elasticsearch and the API
-      currently run without auth/TLS — see `CLAUDE.md`)
+      currently run without auth/TLS)
 - [ ] Live updates (WebSocket push instead of manual refresh)
 - [ ] Kubernetes deployment in AWS
 
