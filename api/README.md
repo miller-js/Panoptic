@@ -1,8 +1,7 @@
 # Panoptic API
 
 A Go REST API that serves ML-enhanced logs out of the `panoptic-predictions`
-Elasticsearch index (written by `ml-service`). See `/home/stickyrice/Panoptic/CLAUDE.md`
-for how that index's schema was derived and what data quirks it has.
+Elasticsearch index (written by `ml-service`).
 
 ## Running
 
@@ -123,7 +122,7 @@ Non-2xx responses are `{"error": "message"}`.
 - CORS is wide open (`Access-Control-Allow-Origin: *`) to unblock local frontend
   development. Tighten before this is exposed anywhere beyond localhost.
 - No auth on the API itself, matching the current (temporary) no-auth Elasticsearch
-  setup — see `CLAUDE.md`.
+  setup.
 - Pagination uses Elasticsearch `from`/`size`, which Elasticsearch limits to the top
   10,000 results by default (`index.max_result_window`). Fine at current data volumes;
   switch to `search_after` if deep pagination is ever needed.
