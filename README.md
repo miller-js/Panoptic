@@ -47,8 +47,9 @@ each component's own `Dockerfile` builds that service.
 The full pipeline above is built and working end-to-end against a real dataset
 (~320k Linux auditd documents).
 
-Not yet built:
+Coming soon:
 
+- [ ] Windows endpoint integration
 - [ ] MITRE ATT&CK tagging and CVSS-style risk scoring
 - [ ] LLM-generated, verbose/actionable alert summaries
 - [ ] End-to-end encryption and authentication (Elasticsearch and the API
