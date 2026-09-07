@@ -155,3 +155,82 @@ summary:
   Node v22.14.0 was installed to `~/.local/node` and symlinked into
   `~/.local/bin` (already on `PATH`) rather than relying on `~/.bashrc`
   sourcing, which only happens in interactive shells.
+
+## Phase 4 — ML / risk / MITRE rework, 2026-09-07
+
+Large rework of the detection pipeline. The v1 service scored every audit
+record (including PATH/CWD/PROCTITLE children) with a 10-feature vector
+re-parsed from `event.original` text, and mapped `int((1 - decision_function)
+* 50)` straight to a risk score — result: **82% of ~63k predictions scored
+exactly 35.0**, whole range 35–54.
+
+New layout under `ml-service/panoptic/` (each stage its own testable module):
+`context` (raw doc → shape-agnostic `EventContext`, prefers ECS structured
+fields), `enrich` (in-batch SYSCALL↔child correlation), `features` (~28-feature
+registry), `profile` (frequency-baseline rarity), `signals` (batch-local
+rolling auth-fail / port counters), `model` (StandardScaler + IsolationForest +
+**percentile calibration** of `decision_function`), `mitre` (rule table, real
+technique IDs only, `[]` when nothing ≥0.35), `risk` (composite CVSS-*inspired*
+`security_risk_score`, weights in `artifacts/risk_weights.json`), `explain`
+(template, no LLM), `alerts` (new `panoptic-alerts` index + explicit mapping),
+`detector` (orchestrator, batches model scoring), `scenarios` (labelled
+synthetic telemetry).
+
+New output index **`panoptic-alerts`** (not `panoptic-predictions`) — richer
+`detection{}` / `risk{}` / `mitre[]` / `explanation{}` schema, `log` kept
+verbatim. Scan cursor moved to `panoptic-state/_doc/scan-cursor` (the old
+"max @timestamp in the predictions index" trick breaks when only some events
+produce alerts).
+
+Config is all env-driven (`config.py`). Training is an explicit CLI
+(`train.py`, random sample via `random_score`, not "latest N"); `evaluate.py`
+and `report.py` are the eval + distribution tools.
+
+Bugs found and fixed during this pass:
+1. **auditd sequence number is not globally unique** — it cycles constantly, so
+   in-batch enrichment merged unrelated events. Event id is now
+   `epoch:sequence` from `msg=audit(EPOCH:SEQ)`.
+2. **`auid` / `uid` unset sentinel** — auditd writes it as `4294967295`
+   (unsigned −1). Wasn't normalised, so every boot-time root process read as a
+   privilege *transition* and got flagged. Now mapped to unknown.
+3. **`^@` in command lines** — Filebeat's auditd module renders the NUL arg
+   separator as the literal two-char string `^@`, not a `\x00` byte, so the
+   control-char stripper missed it. Added caret-notation handling.
+4. **substring path matching** — `"/lib/systemd/system" in
+   "/usr/lib/systemd/system-generators/..."` is true; the T1543.002 rule fired
+   on every systemd generator. Rules now require a write-shaped syscall + a
+   trailing-slash / `.service` path match.
+5. **confidence always ~0** — used `offset_` (fixed at −0.5 for
+   contamination=`auto`) as the boundary; the real boundary is
+   `decision_function == 0`.
+6. **`[model.score(x) for x in X]` in train.py** — 22k individual
+   `decision_function` calls, ~15 min. Batched via `score_many`.
+
+`scikit-learn` is now **pinned** (`==1.9.0`) so `model.pkl` always loads under
+the version that wrote it. Trained artifacts are `.gitignored`; `train.py` /
+`scripts/bootstrap.sh` regenerate them into the `ml_artifacts` volume.
+
+Go API: `api/elastic/predictions.go` replaced by `alerts.go` + `queries.go` +
+`legacy.go`. New endpoints `/api/alerts`, `/api/alerts/{id}`,
+`/api/alerts/stats`, `/api/anomalies/timeline`, `/api/risk/distribution`,
+`/api/mitre/techniques`. `/api/logs*` + `/api/stats` kept as a compat shim over
+`panoptic-alerts`. Client takes an injectable `http.RoundTripper` for tests
+(`go test ./...` runs with no cluster).
+
+Frontend: `LogsTable`/`StatsBar` replaced by an Alert Center table + slide-over
+`AlertDetail`, plus four Recharts panels (anomaly trend, risk distribution,
+severity donut, ATT&CK coverage). `severity.js` holds the shared vocab. Vitest
++ RTL tests added (`npm test`); note `esbuild.jsx: 'automatic'` in
+`vite.config.js` works around Vitest 2.x bundling an older Vite that can't load
+`@vitejs/plugin-react` 6. Verified end-to-end with a Playwright run (zero
+console errors; severity filter, min-risk filter, sort, detail drawer all
+confirmed against live data).
+
+`docker-compose.yml` now builds+runs ml-service / api / frontend too (not just
+ES + Kibana). `./scripts/bootstrap.sh` is the one-command bring-up (waits for
+ES health, builds, trains if no model, starts everything). ES address for
+ml-service is now `PANOPTIC_ES_ADDR` (default unchanged at
+`http://192.168.10.100:9200`; compose overrides to `http://elasticsearch:9200`).
+
+The old `panoptic-predictions` index is superseded but not deleted — nothing
+writes to it any more.
