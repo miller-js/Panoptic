@@ -1,18 +1,16 @@
 # Panoptic frontend
 
-A minimal dashboard over the Panoptic Go API: a filterable/sortable table of
-ML-enhanced logs, with an at-a-glance stats bar. Built with Vite + React (plain
-client-side SPA, no Next.js) — see "Why Vite, not Next.js" below.
+A SOC-analyst dashboard over the Panoptic Go API. Vite + React (plain
+client-side SPA) + Recharts.
 
 ## Running
 
-```
+```bash
 npm install
-npm run dev
+npm run dev            # http://localhost:5173, expects the API at http://localhost:8080
 ```
 
-Opens on `http://localhost:5173`. By default it calls the API at
-`http://localhost:8080` (see `src/api.js`); override with a `.env.local`:
+Override the API URL with `.env.local`:
 
 ```
 VITE_API_URL=http://your-api-host:8080
@@ -20,44 +18,67 @@ VITE_API_URL=http://your-api-host:8080
 
 ### Docker
 
-```
-docker build -t panoptic-frontend --build-arg VITE_API_URL=http://192.168.10.100:8080 .
+```bash
+docker build -t panoptic-frontend --build-arg VITE_API_URL=http://localhost:8080 .
 docker run -p 8081:80 panoptic-frontend
+# or: docker compose up -d frontend
 ```
 
-Vite bakes `VITE_*` env vars into the JS bundle at **build time**, not runtime —
-the API URL must be known when the image is built, not passed via `docker run -e`.
+`VITE_API_URL` is baked into the JS bundle at **build time** — it must be the
+URL the *browser* uses to reach the API (so, the host-published port, not a
+Docker network name). It cannot be changed with `docker run -e`.
 
-## What it does
+## What it shows
 
-- Stats bar: total logs scored, anomalies flagged, avg/max risk score
-  (`GET /api/stats`).
-- Table of logs (`GET /api/logs`) — sortable by time or risk score (click a
-  column header), filterable by anomaly-only, minimum risk score, audit type,
-  and free-text search over the raw audit line. Paginated (20/page).
-- Click a row to expand the full original log document (raw JSON) for
-  drill-down.
-- Risk score gets a color-coded bar (good/warning/serious/critical bucketed
-  at 40/60/80) and every status indicator pairs an icon (dot) with a text
-  label — never color alone.
+* **Stat cards** — total alerts, critical / high counts, model anomalies, avg &
+  max risk (`GET /api/alerts/stats`).
+* **Event & anomaly trend** — events scored vs model anomalies vs high/critical
+  alerts over time (`GET /api/anomalies/timeline`), range selector.
+* **Risk score distribution** — alert count per 0–100 band; click a bar to
+  filter (`GET /api/risk/distribution`).
+* **Severity breakdown** — donut + legend; click to filter.
+* **MITRE ATT&CK coverage** — ranked technique list; click a row to filter the
+  table by that technique (`GET /api/mitre/techniques`).
+* **Alert Center** — filterable/sortable table (`GET /api/alerts`). Filters:
+  severity chips, anomalies-only, time range, min/max risk, host, user, event
+  type, technique, free-text. Click a row for the **detail drawer**: why it
+  fired, risk factors + sub-scores, ATT&CK techniques (linked to attack.mitre.org),
+  event / host / user / process / network fields, detection metadata, and the
+  raw original document.
+
+Risk score and severity always pair a colour with a glyph + text label
+(design-system status colours, never colour alone).
+
+## Time range default
+
+The shipped dataset is historical (mid-2026), so the default range is **All
+time**. "Last 7/30 days" will show nothing against that data.
+
+## Tests
+
+```bash
+npm test        # vitest + Testing Library (~29 tests)
+```
+
+Covers: severity/score helpers, the API client (query serialisation, error
+paths), the alert table (render / empty / sort / select), the detail drawer, the
+filter bar, chart empty/error states, and an `App` integration pass with a
+mocked API (renders from data, surfaces API errors, severity + technique filters
+drive requests, detail panel opens).
+
+Vitest 2.x bundles an older Vite that can't load `@vitejs/plugin-react` 6, so
+`vite.config.js` sets `esbuild.jsx: 'automatic'` for the test transform; the
+production build still goes through the plugin.
 
 ## Why Vite, not Next.js
 
-This is a client-side-only dashboard consuming an existing, separately-hosted
-Go REST API — there's no server-rendering, SEO, or API-route need that Next.js
-solves. Next.js would add a Node server process, routing conventions, and build
-complexity with no corresponding benefit here. Vite gives a plain React SPA
-with fast dev iteration and a static `dist/` output that any web server
-(nginx, S3, etc.) can serve.
+Client-side-only dashboard against an existing separate Go API — no SSR, SEO, or
+API-route need. Vite gives a plain React SPA and a static `dist/` any web server
+can serve.
 
-## Known limitations (first pass)
+## Known limitations
 
-- No auto-refresh/polling — data updates on manual "Refresh" or when a filter
-  changes. ml-service is still processing its backlog in the background;
-  reload to see new predictions land.
-- `confidence` is not surfaced in the UI — the API always returns `null` for
-  it today (not implemented upstream in ml-service).
-- No client-side routing/deep-linking to a specific log or filter state (no
-  URL-synced query params) — everything lives in component state.
-- Audit type filter is a free-text exact-match field, not a populated
-  dropdown — there's no endpoint yet enumerating known audit types.
+* No auto-refresh — use the Refresh button or change a filter.
+* No URL-synced filter state / deep-linking.
+* Recharts makes the bundle ~640 KB (176 KB gzipped); acceptable here, could be
+  code-split later.
