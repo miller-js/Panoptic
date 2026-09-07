@@ -43,6 +43,10 @@ def fetch(client: ElasticClient) -> dict:
             },
             "risk_values": {"terms": {"field": "risk.score", "size": 40, "order": {"_count": "desc"}}},
             "risk_stats": {"stats": {"field": "risk.score"}},
+            "actionable": {
+                "filter": {"range": {"risk.score": {"gte": 20}}},
+                "aggs": {"values": {"terms": {"field": "risk.score", "size": 40, "order": {"_count": "desc"}}}},
+            },
             "severity": {"terms": {"field": "risk.severity", "size": 10}},
             "anomaly_hist": {"histogram": {"field": "detection.anomaly_score", "interval": 0.1, "min_doc_count": 0}},
             "anomaly_stats": {"stats": {"field": "detection.anomaly_score"}},
@@ -69,9 +73,20 @@ def render(resp: dict) -> tuple[str, float]:
     top_share = (top_values[0]["doc_count"] / total) if (top_values and total) else 0.0
     lines.append(f"\ndistinct risk score values (top {distinct} shown); "
                  f"most common = {top_values[0]['key'] if top_values else 'n/a'} "
-                 f"({top_share:.1%} of alerts)")
+                 f"({top_share:.1%} of all alerts)")
     for b in top_values[:12]:
         lines.append(f"  {b['key']:>3}: {b['doc_count']:>7}  {_bar(b['doc_count'], total)}")
+
+    # Big clusters of identical *informational* scores are fine (e.g. one
+    # `apt upgrade` = thousands of near-identical low-risk child processes).
+    # What must not collapse is the actionable (>= low) range.
+    act = aggs["actionable"]
+    act_total = act["doc_count"]
+    act_values = act["values"]["buckets"]
+    act_share = (act_values[0]["doc_count"] / act_total) if (act_values and act_total) else 0.0
+    lines.append(f"\nactionable alerts (risk >= 20): {act_total}; "
+                 f"most common score {act_values[0]['key'] if act_values else 'n/a'} "
+                 f"({act_share:.1%} of those), {len(act_values)} distinct values")
 
     lines.append("\nseverity:")
     for b in aggs["severity"]["buckets"]:
@@ -92,13 +107,14 @@ def render(resp: dict) -> tuple[str, float]:
     if names:
         lines.append("\n  names: " + "; ".join(f"{k} ({v})" for k, v in list(names.items())[:8]))
 
-    return "\n".join(lines) + "\n", top_share
+    return "\n".join(lines) + "\n", act_share
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--assert-spread", type=float, default=None,
-                   help="exit non-zero if the single most common risk score exceeds this fraction")
+                   help="exit non-zero if one risk score holds more than this fraction "
+                        "of the actionable (risk >= 20) alerts")
     args = p.parse_args()
 
     client = ElasticClient(cfg.load_config().elastic)
@@ -106,11 +122,11 @@ def main() -> None:
         raise SystemExit(f"cannot reach Elasticsearch at {client.es}")
 
     resp = fetch(client)
-    text, top_share = render(resp)
+    text, act_share = render(resp)
     print(text)
 
-    if args.assert_spread is not None and top_share > args.assert_spread:
-        print(f"FAIL: most common risk score holds {top_share:.1%} of alerts "
+    if args.assert_spread is not None and act_share > args.assert_spread:
+        print(f"FAIL: one risk score holds {act_share:.1%} of actionable alerts "
               f"(> {args.assert_spread:.0%} threshold)")
         sys.exit(1)
 

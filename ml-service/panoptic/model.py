@@ -22,6 +22,7 @@ What changed vs the original:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -92,11 +93,28 @@ class Scored:
     prediction: int        # legacy IsolationForest label: 1 normal / -1 anomaly
 
 
+# An event is labelled an anomaly (prediction == -1) when its calibrated
+# anomaly_score is at or above this percentile of the training distribution.
+# Derived from the score we already trust, rather than IsolationForest's
+# contamination="auto" label, which flags ~half of this dataset.
+try:
+    DEFAULT_ANOMALY_LABEL_PCT = float(os.environ.get("PANOPTIC_ANOMALY_LABEL_PCT", "0.98"))
+except ValueError:
+    DEFAULT_ANOMALY_LABEL_PCT = 0.98
+
+
 class AnomalyModel:
-    def __init__(self, pipeline: Pipeline, calibration: Calibration, feature_names: list[str] | None = None):
+    def __init__(
+        self,
+        pipeline: Pipeline,
+        calibration: Calibration,
+        feature_names: list[str] | None = None,
+        anomaly_label_pct: float = DEFAULT_ANOMALY_LABEL_PCT,
+    ):
         self.pipeline = pipeline
         self.calibration = calibration
         self.feature_names = feature_names or list(FEATURE_NAMES)
+        self.anomaly_label_pct = anomaly_label_pct
 
     # ---- training ---------------------------------------------------------
 
@@ -123,11 +141,11 @@ class AnomalyModel:
     def score_many(self, vectors: list[list[float]]) -> list[Scored]:
         matrix = np.asarray(vectors, dtype=float)
         raw = self.pipeline.decision_function(matrix)
-        labels = self.pipeline.predict(matrix)
         out = []
-        for raw_score, label in zip(raw, labels):
+        for raw_score in raw:
             pct = self.calibration.percentile_of(raw_score)
             anomaly_score = 1.0 - pct
+            label = -1 if anomaly_score >= self.anomaly_label_pct else 1
             # Confidence: how far past the anomaly boundary this point sits.
             # sklearn defines that boundary at decision_function == 0 (predict
             # returns -1 below it), so measure the margin from 0 in units of the

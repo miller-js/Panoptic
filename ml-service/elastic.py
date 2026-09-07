@@ -96,6 +96,10 @@ class ElasticClient:
         else:
             query = {"match_all": {}}
 
+        # A plain search is capped at index.max_result_window (10k). Larger
+        # batches would need search_after; not worth it -- 10k source docs is
+        # already a big cycle.
+        size = min(size, 10000)
         resp = self.es.search(
             index=self.source_index,
             size=size,

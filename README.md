@@ -350,6 +350,7 @@ class separation and non-collapsed scores, not production-grade metrics).
 | `PANOPTIC_IF_*` | ml (train) | see above | Isolation Forest params |
 | `PANOPTIC_TRAIN_SAMPLE_SIZE` / `_SEED` | ml (train) | `40000` / `1337` | training sample |
 | `PANOPTIC_SEV_LOW/MEDIUM/HIGH/CRITICAL` | ml | `20/40/60/80` | severity band lower bounds |
+| `PANOPTIC_ANOMALY_LABEL_PCT` | ml | `0.98` | calibrated-score percentile at/above which `prediction` = −1 (replaces IsolationForest's noisy `contamination=auto` label) |
 | `PANOPTIC_ASSET_CRITICALITY` | ml | `{}` | per-host criticality JSON |
 | `PORT` | api | `8080` | HTTP port |
 | `PANOPTIC_CORS_ORIGINS` | api | `*` | comma list; tighten before exposing |

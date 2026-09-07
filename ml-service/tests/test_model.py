@@ -44,6 +44,16 @@ def test_save_load_roundtrip(trained_model, tmp_path):
     assert reloaded.feature_names == trained_model.feature_names
 
 
+def test_prediction_label_follows_calibrated_percentile(trained_model):
+    n = len(trained_model.feature_names)
+    trained_model.anomaly_label_pct = 0.95
+    normal = trained_model.score([0.3] * n)
+    extreme = trained_model.score([12.0] * n)
+    assert extreme.prediction == -1
+    assert normal.prediction == 1
+    assert (extreme.anomaly_score >= 0.95) == (extreme.prediction == -1)
+
+
 def test_score_many_matches_score(trained_model):
     n = len(trained_model.feature_names)
     vs = [[0.2] * n, [5.0] * n]
