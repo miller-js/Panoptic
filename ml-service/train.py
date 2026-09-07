@@ -37,7 +37,11 @@ log = logging.getLogger("panoptic.train")
 def _parse_args() -> argparse.Namespace:
     config = cfg.load_config()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--sample-size", type=int, default=config.train.sample_size)
+    p.add_argument("--sample-size", type=int, default=config.train.sample_size,
+                   help="random source docs to fit the model + calibration on")
+    p.add_argument("--profile-sample-size", type=int, default=config.train.profile_sample_size,
+                   help="random source docs to build the behavioural profile from "
+                        "(larger -> serve-time rarity better matches training)")
     p.add_argument("--sample-seed", type=int, default=config.train.sample_seed)
     p.add_argument("--n-estimators", type=int, default=config.model.n_estimators)
     p.add_argument("--max-samples", type=int, default=config.model.max_samples)
@@ -47,14 +51,9 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def build_training_set(logs: list[dict]) -> tuple[list[list[float]], Profile]:
-    """Contexts -> profile (from ALL events) -> feature vectors (scorable only).
-
-    The profile must see children too (they carry paths etc. via enrichment
-    onto the parent, but rarity counts are keyed on exe/host/user which only
-    the SYSCALL has -- so in practice children contribute little, which is
-    fine).
-    """
+def scorable_contexts(logs: list[dict]) -> list:
+    """Source docs -> EventContext list for the standalone (scorable) records,
+    with children folded in via enrichment and rolling signals applied."""
 
     enrichment = build_enrichment_map(logs)
     rolling = RollingSignals()
@@ -62,7 +61,6 @@ def build_training_set(logs: list[dict]) -> tuple[list[list[float]], Profile]:
 
     contexts = []
     for lg in logs:
-        host = (lg.get("host") or {}).get("hostname") or (lg.get("host") or {}).get("name")
         ctx = build_context(lg, None)
         signals = rolling.update(ctx)
         if ctx.record_type in child_types:
@@ -72,15 +70,16 @@ def build_training_set(logs: list[dict]) -> tuple[list[list[float]], Profile]:
             ctx.recent_auth_failures = signals["recent_auth_failures"]
             ctx.recent_distinct_ports = signals["recent_distinct_ports"]
         contexts.append(ctx)
+    return contexts
 
-    profile = Profile.from_events(contexts)
 
-    X = []
+def feature_matrix(contexts: list, profile: Profile) -> list[list[float]]:
+    out = []
     for ctx in contexts:
         sig = {"recent_auth_failures": ctx.recent_auth_failures,
                "recent_distinct_ports": ctx.recent_distinct_ports}
-        X.append(feature_vector(ctx, profile, sig))
-    return X, profile
+        out.append(feature_vector(ctx, profile, sig))
+    return out
 
 
 def main() -> None:
@@ -91,15 +90,28 @@ def main() -> None:
     if not client.ping():
         raise SystemExit(f"cannot reach Elasticsearch at {config.elastic.addr}")
 
-    log.info("sampling up to %d source docs (seed=%d)", args.sample_size, args.sample_seed)
-    logs = client.scroll_sample(args.sample_size, args.sample_seed)
-    log.info("got %d docs", len(logs))
-    if len(logs) < 500:
+    # 1. Behavioural profile from a large sample -- the wider the coverage, the
+    #    less the serve-time rarity features drift from what the model trained on.
+    log.info("building profile from up to %d source docs (seed=%d)",
+             args.profile_sample_size, args.sample_seed)
+    profile_logs = client.scroll_sample(args.profile_sample_size, args.sample_seed)
+    profile = Profile.from_events(scorable_contexts(profile_logs))
+    log.info("profile: %d events, %d distinct executables",
+             profile.event_count, len(profile.tables.get("exe", {})))
+
+    # 2. Model + calibration from a modest independent random sample, scored
+    #    against that profile.
+    if args.sample_size >= args.profile_sample_size:
+        model_logs = profile_logs
+    else:
+        log.info("sampling %d source docs for model fit (seed=%d)", args.sample_size, args.sample_seed + 1)
+        model_logs = client.scroll_sample(args.sample_size, args.sample_seed + 1)
+    contexts = scorable_contexts(model_logs)
+    if len(contexts) < 500:
         raise SystemExit("not enough data to train (need >= 500 scorable events)")
 
-    X, profile = build_training_set(logs)
-    log.info("built %d feature vectors over %d features; profile has %d events",
-             len(X), len(FEATURE_NAMES), profile.event_count)
+    X = feature_matrix(contexts, profile)
+    log.info("built %d feature vectors over %d features", len(X), len(FEATURE_NAMES))
 
     model_kwargs = cfg.ModelConfig(
         n_estimators=args.n_estimators,

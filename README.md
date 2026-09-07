@@ -348,7 +348,8 @@ class separation and non-collapsed scores, not production-grade metrics).
 | `PANOPTIC_BATCH_SIZE` | ml | `1000` | source docs consumed per cycle |
 | `PANOPTIC_LOOP_INTERVAL` | ml | `300` | seconds between cycles |
 | `PANOPTIC_IF_*` | ml (train) | see above | Isolation Forest params |
-| `PANOPTIC_TRAIN_SAMPLE_SIZE` / `_SEED` | ml (train) | `40000` / `1337` | training sample |
+| `PANOPTIC_TRAIN_SAMPLE_SIZE` / `_SEED` | ml (train) | `40000` / `1337` | model-fit sample |
+| `PANOPTIC_PROFILE_SAMPLE_SIZE` | ml (train) | `200000` | behavioural-profile sample (larger than the model fit so serve-time rarity matches training) |
 | `PANOPTIC_SEV_LOW/MEDIUM/HIGH/CRITICAL` | ml | `20/40/60/80` | severity band lower bounds |
 | `PANOPTIC_ANOMALY_LABEL_PCT` | ml | `0.98` | calibrated-score percentile at/above which `prediction` = −1 (replaces IsolationForest's noisy `contamination=auto` label) |
 | `PANOPTIC_ASSET_CRITICALITY` | ml | `{}` | per-host criticality JSON |

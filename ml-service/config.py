@@ -98,7 +98,11 @@ class ModelConfig:
 
 @dataclass
 class TrainConfig:
-    sample_size: int = _get_int("PANOPTIC_TRAIN_SAMPLE_SIZE", 40000)
+    sample_size: int = _get_int("PANOPTIC_TRAIN_SAMPLE_SIZE", 80000)
+    # The profile is built from a much larger sweep than the model fit: rarity
+    # features that only saw a small slice of the corpus at train time would
+    # read as "novel" for most live events purely because of the sampling.
+    profile_sample_size: int = _get_int("PANOPTIC_PROFILE_SAMPLE_SIZE", 300000)
     # Random seed for the Elasticsearch random_score sampler -- pin it so a
     # retrain on the same data is reproducible.
     sample_seed: int = _get_int("PANOPTIC_TRAIN_SAMPLE_SEED", 1337)
