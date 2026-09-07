@@ -156,7 +156,12 @@ RULES: list[tuple[Technique, Rule]] = [
     # -- Privilege escalation -------------------------------------
     (T1548_003, lambda c: 0.85 if (c.process_name == "sudo" and _sudo_to_shell(c))
      else (0.4 if c.record_type == "USER_CMD" and _sudo_to_shell(c) else None)),
-    (T1548_001, lambda c: 0.55 if c.record_type == "BPRM_FCAPS" else None),
+    # Executing an already-capability-endowed binary (ping, mtr, ...) fires
+    # BPRM_FCAPS routinely and is not suspicious. Granting caps / setuid is.
+    (T1548_001, lambda c: 0.7 if (
+        c.process_name == "setcap"
+        or (c.process_name == "chmod" and any(t in (c.command_line or "") for t in ("+s", "u+s", "g+s", "4755", "2755", "6755")))
+    ) else None),
     # -- Persistence ---------------------------------------------
     (T1136_001, lambda c: 0.7 if (c.process_name in {"useradd", "adduser"} or c.record_type == "ADD_USER") else None),
     (T1098, lambda c: 0.6 if (c.process_name in {"usermod", "gpasswd", "chage"}
