@@ -3,6 +3,9 @@
 A SOC-analyst dashboard over the Panoptic Go API. Vite + React (plain
 client-side SPA) + Recharts.
 
+<img width="1360" height="826" alt="image" src="https://github.com/user-attachments/assets/5e4b11f6-a304-4442-a804-a3d09d78218a" />
+
+
 ## Running
 
 ```bash
