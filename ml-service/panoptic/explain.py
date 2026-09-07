@@ -63,7 +63,7 @@ def _pick_title(ctx: EventContext, risk: RiskResult, techniques: list) -> str:
     if "rare_behaviour" in f:
         return f"Rare {ctx.record_type.title()} activity"
     if techniques:
-        return techniques[0]["technique_name"].split(":")[-1].strip()
+        return techniques[0]["technique_name"]
     return f"Anomalous {ctx.record_type.title()} activity"
 
 
