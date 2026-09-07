@@ -376,6 +376,16 @@ class separation and non-collapsed scores, not production-grade metrics).
 * Cross-version model pickles: `requirements.txt` pins `scikit-learn` so the
   stored `model.pkl` always loads under the version that wrote it.
 
+Roadmap:
+
+- [ ] Windows endpoint integration (Sysmon → the same context/feature layer)
+- [x] MITRE ATT&CK tagging and CVSS-inspired risk scoring
+- [ ] LLM-generated, verbose/actionable alert summaries (on top of the current
+      template explanations)
+- [ ] End-to-end encryption and authentication for Elasticsearch and the API
+- [ ] Live updates (WebSocket push instead of manual refresh)
+- [ ] Kubernetes deployment in AWS
+
 ## Development note
 
 Portions of this project (debugging, the Go API, the React frontend, and the
