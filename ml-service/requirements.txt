@@ -1,4 +1,8 @@
+# Pin the Elasticsearch client to the 8.x line: the 9.x client sends an
+# Accept header the ES 8.18 server rejects outright (see CLAUDE.md).
 elasticsearch>=8.18.0,<9.0.0
-scikit-learn
-joblib
-fastapi
+# Pin scikit-learn so the pickled model in artifacts/ is loaded by the same
+# version it was trained with (no InconsistentVersionWarning / silent drift).
+scikit-learn==1.9.0
+numpy>=2.0,<3.0
+joblib>=1.3

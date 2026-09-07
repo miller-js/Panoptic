@@ -1,134 +1,176 @@
-'''
-This file knows everything about Elasticsearch.
-None of the other files need to care how Elasticsearch works
-'''
+"""All Elasticsearch I/O for the ML service.
 
-from elasticsearch import Elasticsearch
-from datetime import datetime, timezone
+Nothing else in the service imports ``elasticsearch`` directly. The detector
+pipeline works on plain dicts; this module is the only thing that knows about
+indices, cursors, and the bulk API.
+"""
 
-# Represent Elasticsearch as a class
+from __future__ import annotations
+
+import logging
+from typing import Iterable
+
+from elasticsearch import Elasticsearch, NotFoundError
+from elasticsearch.helpers import bulk
+
+import config as cfg
+
+log = logging.getLogger("panoptic.elastic")
+
+CURSOR_DOC_ID = "scan-cursor"
+
+
 class ElasticClient:
-    def __init__(self):
+    def __init__(self, conf: cfg.ElasticConfig | None = None):
+        conf = conf or cfg.ElasticConfig()
         self.es = Elasticsearch(
-            "http://192.168.10.100:9200",
-            basic_auth=("elastic", "changeme")
+            conf.addr,
+            basic_auth=(conf.user, conf.password),
+            request_timeout=conf.request_timeout,
+        )
+        self.source_index = cfg.SOURCE_INDEX
+        self.alerts_index = cfg.ALERTS_INDEX
+        self.state_index = cfg.STATE_INDEX
+
+    # ---- health / setup ------------------------------------------------
+
+    def ping(self) -> bool:
+        return bool(self.es.ping())
+
+    def info(self) -> dict:
+        return self.es.info().body
+
+    def ensure_index(self, name: str, body: dict) -> bool:
+        """Create ``name`` with ``body`` if absent. Returns True if created."""
+
+        if self.es.indices.exists(index=name):
+            return False
+        self.es.indices.create(index=name, body=body)
+        log.info("created index %s", name)
+        return True
+
+    def ensure_state_index(self) -> None:
+        self.ensure_index(
+            self.state_index,
+            {"mappings": {"properties": {
+                "last_timestamp": {"type": "date"},
+                "last_seq_no": {"type": "long"},
+                "updated_at": {"type": "date"},
+            }}},
         )
 
-    def test_connection(self):
-        return self.es.info()
+    # ---- scan cursor -------------------------------------------------
 
-    def get_latest_logs(self, size=10):
-    # Gets only the last 10 logs, returns them as a list of dictionaries,
-    # each being a log with only the source_ field.
-        response = self.es.search(
-            index="filebeat-*",
-            size=size,
-            sort=[
-                {
-                    "@timestamp": {
-                        "order": "desc"
-                    }
-                }
-            ],
-            query={
-                "match_all": {}
-            }
+    def read_cursor(self) -> dict | None:
+        try:
+            doc = self.es.get(index=self.state_index, id=CURSOR_DOC_ID)
+            return doc["_source"]
+        except NotFoundError:
+            return None
+
+    def write_cursor(self, last_timestamp: str, last_seq_no: int | None = None) -> None:
+        from datetime import datetime, timezone
+
+        self.es.index(
+            index=self.state_index,
+            id=CURSOR_DOC_ID,
+            document={
+                "last_timestamp": last_timestamp,
+                "last_seq_no": last_seq_no,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
 
-        return [hit["_source"] for hit in response["hits"]["hits"]]
+    # ---- reading source logs -------------------------------------
 
-    def get_unprocessed_logs(self, size=10):
-    # Advances forward through filebeat-* in @timestamp order, picking up
-    # after the last log we already scored (per panoptic-predictions).
-    # Without this, "latest N" against a static/historical dataset would
-    # just re-score the same N documents forever and never reach the rest
-    # of the backlog.
-        cursor_response = self.es.search(
-            index="panoptic-predictions",
-            size=1,
-            sort=[{"log.@timestamp": {"order": "desc"}}],
-            query={"match_all": {}}
-        )
+    def fetch_unprocessed(self, size: int) -> list[dict]:
+        """Next ``size`` source docs strictly after the cursor, timestamp asc.
 
-        cursor_hits = cursor_response["hits"]["hits"]
+        Relies on Elasticsearch's ~1s refresh making newly-indexed docs visible
+        between cycles -- fine for the real 300s loop.
+        """
 
-        if cursor_hits:
-            query = {
-                "range": {
-                    "@timestamp": {
-                        "gt": cursor_hits[0]["_source"]["log"]["@timestamp"]
-                    }
-                }
-            }
+        cursor = self.read_cursor()
+        if cursor and cursor.get("last_timestamp"):
+            query = {"range": {"@timestamp": {"gt": cursor["last_timestamp"]}}}
         else:
             query = {"match_all": {}}
 
-        response = self.es.search(
-            index="filebeat-*",
+        resp = self.es.search(
+            index=self.source_index,
             size=size,
-            sort=[
-                {"@timestamp": {"order": "asc"}},
-                {"_seq_no": {"order": "asc"}}
-            ],
-            query=query
+            query=query,
+            sort=[{"@timestamp": {"order": "asc"}}, {"_doc": {"order": "asc"}}],
         )
+        return [hit["_source"] for hit in resp["hits"]["hits"]]
 
-        return [hit["_source"] for hit in response["hits"]["hits"]]
+    def random_sample(self, size: int, seed: int) -> list[dict]:
+        """Uniform-ish random sample of source docs for model training."""
 
-    def get_logs_by_type(self, audit_type, size=100):
-        response = self.es.search(
-            index="filebeat-*",
-            size=size,
-            sort=[{"@timestamp": {"order": "desc"}}],
-            query={
-                "match": {
-                    "message": f"type={audit_type}"
-                }
+        out: list[dict] = []
+        page = min(size, 5000)
+        # function_score + random_score gives a stable pseudo-random ordering
+        query = {
+            "function_score": {
+                "query": {"match_all": {}},
+                "random_score": {"seed": seed, "field": "_seq_no"},
+                "boost_mode": "replace",
             }
-        )
-
-        return [hit["_source"] for hit in response["hits"]["hits"]]
-
-    def store_prediction(self, original_log, prediction, risk_score,
-                         confidence=None, model="baseline"):
-
-        document = {
-            "@timestamp": datetime.now(timezone.utc).isoformat(),
-            "model": model,
-            "prediction": prediction,
-            "risk_score": risk_score,
-            "confidence": confidence,
-            "log": original_log
         }
+        resp = self.es.search(index=self.source_index, size=page, query=query)
+        for hit in resp["hits"]["hits"]:
+            out.append(hit["_source"])
+        return out[:size]
 
-        return self.es.index(
-            index="panoptic-predictions",
-            document=document
-        )
+    def scroll_sample(self, size: int, seed: int) -> list[dict]:
+        """Larger random sample via search_after over a random_score sort."""
 
-    def get_processed_logs(self, size=10):
-        response = self.es.search(
-            index="filebeat-*",
-            size=size,
-            sort=[
-                {
-                    "@timestamp": {
-                        "order": "desc"
-                    }
-                }
-            ],
-            query={
-                "exists": {
-                    "field": "ml.risk_score"
-                }
+        out: list[dict] = []
+        query = {
+            "function_score": {
+                "query": {"match_all": {}},
+                "random_score": {"seed": seed, "field": "_seq_no"},
+                "boost_mode": "replace",
             }
-        )
-
-        return [
-            {
-                "id": hit["_id"],
-                "index": hit["_index"],
-                "source": hit["_source"]
+        }
+        search_after = None
+        page = 2000
+        while len(out) < size:
+            body = {
+                "size": min(page, size - len(out)),
+                "query": query,
+                "sort": [{"_score": {"order": "desc"}}, {"_doc": "asc"}],
+                "track_total_hits": False,
             }
-            for hit in response["hits"]["hits"]
-        ]
+            if search_after:
+                body["search_after"] = search_after
+            resp = self.es.search(index=self.source_index, body=body)
+            hits = resp["hits"]["hits"]
+            if not hits:
+                break
+            out.extend(h["_source"] for h in hits)
+            search_after = hits[-1]["sort"]
+        return out[:size]
+
+    def count(self, index: str) -> int:
+        return int(self.es.count(index=index)["count"])
+
+    def search(self, index: str, body: dict) -> dict:
+        return self.es.search(index=index, body=body).body
+
+    # ---- writing alerts ------------------------------------------
+
+    def bulk_index_alerts(self, id_doc_pairs: Iterable[tuple[str, dict]]) -> tuple[int, int]:
+        actions = (
+            {"_op_type": "index", "_index": self.alerts_index, "_id": _id, "_source": doc}
+            for _id, doc in id_doc_pairs
+        )
+        success, errors = bulk(self.es, actions, stats_only=False, raise_on_error=False)
+        error_count = len(errors) if isinstance(errors, list) else int(errors)
+        return success, error_count
+
+    def refresh(self, index: str) -> None:
+        try:
+            self.es.indices.refresh(index=index)
+        except Exception:  # noqa: BLE001 -- refresh is best-effort
+            pass
