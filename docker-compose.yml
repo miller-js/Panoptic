@@ -2,35 +2,86 @@ services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.18.0
     container_name: elasticsearch
-
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
-
     ports:
       - "9200:9200"
       - "9300:9300"
-
     volumes:
       - es_data:/usr/share/elasticsearch/data
-
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.18.0
     container_name: kibana
-
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-
     ports:
       - "5601:5601"
-
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
 
+  # Python anomaly-detection + risk-scoring service. Reads filebeat-*, writes
+  # panoptic-alerts. The model lives in the ml_artifacts volume; (re)train with
+  #   docker compose run --rm ml-service python train.py
+  ml-service:
+    build: ./ml-service
+    container_name: ml-service
+    environment:
+      - PANOPTIC_ES_ADDR=http://elasticsearch:9200
+      # Backlog throughput / cadence. Lower the interval + raise the batch for a
+      # fast first backfill, then leave the defaults for steady state.
+      - PANOPTIC_BATCH_SIZE=${PANOPTIC_BATCH_SIZE:-1000}
+      - PANOPTIC_LOOP_INTERVAL=${PANOPTIC_LOOP_INTERVAL:-300}
+      # Per-host asset criticality, e.g. '{"db-prod-1": 0.9}'
+      - PANOPTIC_ASSET_CRITICALITY=${PANOPTIC_ASSET_CRITICALITY:-}
+    volumes:
+      - ml_artifacts:/app/artifacts
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Go REST API over panoptic-alerts.
+  api:
+    build: ./api
+    container_name: panoptic-api
+    environment:
+      - PANOPTIC_ES_ADDR=http://elasticsearch:9200
+      - PORT=8080
+      # Lock this down before exposing the API beyond localhost.
+      - PANOPTIC_CORS_ORIGINS=${PANOPTIC_CORS_ORIGINS:-*}
+    ports:
+      - "8080:8080"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # React dashboard (nginx-served static build). VITE_API_URL is baked at build
+  # time -- it must be the URL the *browser* uses to reach the API, so it points
+  # at the host-published port, not the compose network name.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${PANOPTIC_API_URL:-http://localhost:8080}
+    container_name: panoptic-frontend
+    ports:
+      - "8081:80"
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:
   es_data:
+  ml_artifacts:

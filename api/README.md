@@ -1,128 +1,100 @@
 # Panoptic API
 
-A Go REST API that serves ML-enhanced logs out of the `panoptic-predictions`
-Elasticsearch index (written by `ml-service`).
+Go REST API over the `panoptic-alerts` Elasticsearch index (written by
+`ml-service`).
+
+Layering: `main.go` (routes + CORS) → `handlers.go` (HTTP: param parsing,
+status codes) → `elastic/` (query bodies + response decoding). Handlers hold no
+Elasticsearch knowledge; the `elastic` package builds no HTTP responses.
 
 ## Running
 
-```
+```bash
 go run .
+# or
+docker compose up -d api
 ```
 
-Or via Docker:
+### Configuration
 
-```
-docker build -t panoptic-api .
-docker run --network host -e PORT=8080 panoptic-api
-```
-
-### Configuration (environment variables)
-
-| Variable                | Default                    | Notes                                          |
-|--------------------------|-----------------------------|-------------------------------------------------|
-| `PORT`                   | `8080`                      | HTTP listen port                                |
-| `PANOPTIC_ES_ADDR`       | `http://192.168.10.100:9200`| Matches ml-service's hardcoded Elasticsearch host |
-| `PANOPTIC_ES_USER`       | `elastic`                   | Cluster security is currently disabled; ignored server-side today |
-| `PANOPTIC_ES_PASSWORD`   | `changeme`                  | Same as above |
+| Variable | Default | Notes |
+|---|---|---|
+| `PORT` | `8080` | HTTP listen port |
+| `PANOPTIC_ES_ADDR` | `http://192.168.10.100:9200` | compose overrides to `http://elasticsearch:9200` |
+| `PANOPTIC_ES_USER` / `PANOPTIC_ES_PASSWORD` | `elastic` / `changeme` | cluster security is disabled today; ignored server-side |
+| `PANOPTIC_ALERTS_INDEX` | `panoptic-alerts` | index to read |
+| `PANOPTIC_CORS_ORIGINS` | `*` | comma-separated allow-list; `*` echoes any origin |
 
 ## Endpoints
 
-All responses are JSON. All endpoints are `GET` only for this first pass.
+All `GET`, all JSON. Non-2xx bodies are `{"error": "..."}` — `400` invalid
+param, `404` unknown id, `502` Elasticsearch failure.
 
-### `GET /health`
+### `GET /health` → `{"status":"ok"}`
 
-Liveness check.
+### `GET /api/alerts`
 
-```json
-{ "status": "ok" }
-```
+Filterable / sortable / paginated alert list.
 
-### `GET /api/logs`
+| Param | Type | Notes |
+|---|---|---|
+| `size` / `from` | int | page size (≤100, default 20) / offset |
+| `sort_by` | enum | `risk_score` (default), `detected_at`, `event_time` |
+| `order` | enum | `desc` (default), `asc` |
+| `severity` | csv | any of `informational,low,medium,high,critical` |
+| `min_risk_score` / `max_risk_score` | number | on `risk.score` |
+| `min_anomaly_score` | number | on `detection.anomaly_score` |
+| `anomaly` | bool | only IsolationForest label `-1` |
+| `host` | string | exact `host.name` |
+| `user` | string | matches `user.name` or `user.audit_name` |
+| `event_type` | string | exact `event.type` (e.g. `SYSCALL`), upper-cased |
+| `technique` | string | exact `mitre.technique_id` (e.g. `T1059.004`) |
+| `from_time` / `to_time` | RFC3339 or `YYYY-MM-DD` | range on `event.timestamp` |
+| `q` | string | full-text over explanation, command line, raw event |
 
-Paginated, filterable, sortable list of ML-enhanced logs.
+Response: `{ "total": <int>, "items": [ <alert>, ... ] }` — alert shape is the
+`panoptic-alerts` document (see repo README) plus a top-level `id`.
 
-**Query parameters** (all optional):
+### `GET /api/alerts/{id}` → one alert, `404` if absent.
 
-| Param            | Type    | Default      | Notes                                                    |
-|-------------------|---------|--------------|-----------------------------------------------------------|
-| `size`            | int     | `20`         | Page size, clamped to 100                                 |
-| `from`            | int     | `0`          | Offset for pagination                                     |
-| `sort_by`         | string  | `timestamp`  | `timestamp` or `risk_score`                                |
-| `order`           | string  | `desc`       | `asc` or `desc`                                            |
-| `min_risk_score`  | float   | —            | Only logs with `risk_score >= min_risk_score`             |
-| `anomaly`         | bool    | —            | `true` returns only `prediction == -1` (flagged anomalies) |
-| `audit_type`      | string  | —            | Exact match on the audit record type (e.g. `SYSCALL`, `BPF`, `PROCTITLE`) |
-| `q`               | string  | —            | Free-text search over the raw audit line                  |
-
-**Response:**
-
-```json
-{
-  "total": 108,
-  "items": [
-    {
-      "id": "Y4tHP6ABQzU7nwqBcpRJ",
-      "timestamp": "2026-08-26T18:38:48.706109+00:00",
-      "log_timestamp": "2026-07-13T22:50:14.018Z",
-      "model": "IsolationForest-v1",
-      "prediction": -1,
-      "risk_score": 54,
-      "confidence": null,
-      "hostname": "LinuxEndpoint",
-      "audit_type": "SYSCALL",
-      "message": "type=SYSCALL msg=audit(...): ...",
-      "log": { "...full original filebeat/auditd document, verbatim..." }
-    }
-  ]
-}
-```
-
-- `prediction`: `1` = normal, `-1` = anomaly (raw IsolationForest output).
-- `risk_score`: `0`-`100`, higher = more anomalous.
-- `confidence`: always `null` today — not implemented upstream in ml-service yet.
-- `log`: the complete original source document as ml-service received it (varies in
-  shape — see the two ingestion formats noted in `CLAUDE.md`), plus a `parsed` object.
-- `hostname`, `audit_type`, `message` are convenience fields flattened out of `log`
-  for table display; they're omitted if not present in the source document.
-
-Example — top 5 anomalies:
-
-```
-curl "http://localhost:8080/api/logs?anomaly=true&sort_by=risk_score&order=desc&size=5"
-```
-
-### `GET /api/logs/{id}`
-
-Fetch a single log entry by its Elasticsearch document ID (the `id` field from a list
-response). Same shape as one item above. `404` if not found.
-
-### `GET /api/stats`
-
-Summary for an at-a-glance dashboard view.
+### `GET /api/alerts/stats`  (also `GET /api/stats`)
 
 ```json
-{
-  "total": 5000,
-  "anomaly_count": 108,
-  "avg_risk_score": 37.92,
-  "max_risk_score": 54
-}
+{ "total", "anomaly_count", "avg_risk_score", "max_risk_score",
+  "by_severity": { "low": …, "high": … }, "last_24h" }
 ```
 
-## Errors
+### `GET /api/anomalies/timeline`
 
-Non-2xx responses are `{"error": "message"}`.
+`interval` ∈ `5m,15m,1h,3h,12h,1d` (default `1h`); optional `from_time`/`to_time`
+(no default window — spans the data if unset). Returns
+`{ "interval", "buckets": [ { "timestamp", "total", "anomalies", "high_or_critical" } ] }`.
 
-- `400` — invalid query parameter (bad type, out-of-range value, unknown enum value).
-- `404` — `/api/logs/{id}` with no matching document.
-- `502` — Elasticsearch query failed (connection issue, cluster error).
+### `GET /api/risk/distribution`
 
-## Known limitations (first pass)
+`{ "total", "bands": [ { "key", "severity", "from", "to", "count" } ] }` — always
+the five severity bands, zero-filled.
 
-- CORS is wide open (`Access-Control-Allow-Origin: *`) to unblock local frontend
-  development. Tighten before this is exposed anywhere beyond localhost.
-- No auth on the API itself, matching the current (temporary) no-auth Elasticsearch
-  setup.
-- Pagination uses Elasticsearch `from`/`size`, which Elasticsearch limits to the top
-  10,000 results by default (`index.max_result_window`). Fine at current data volumes;
+### `GET /api/mitre/techniques`
+
+Optional `from_time`/`to_time`, `size` (≤50). Returns
+`{ "techniques": [ { "technique_id", "technique_name", "tactic", "count", "max_confidence" } ] }`,
+count-descending.
+
+### Legacy: `GET /api/logs`, `GET /api/logs/{id}`
+
+The pre-2.0 response shape (`prediction`, `risk_score`, `audit_type`, `message`,
+`log`, …), served from `panoptic-alerts` so old consumers keep working. Params:
+`size`, `from`, `sort_by` (`timestamp`|`risk_score`), `order`, `min_risk_score`,
+`anomaly`, `audit_type`, `q`. Prefer `/api/alerts` for new work.
+
+## Tests
+
+`go test ./...` — handler status codes / param validation and the Elasticsearch
+query layer, both against a stubbed `http.RoundTripper` (no cluster needed).
+
+## Known limitations
+
+* No auth on the API; CORS defaults to `*`. Lock down before any exposure.
+* `from`/`size` pagination is capped by Elasticsearch's 10 000-result window —
   switch to `search_after` if deep pagination is ever needed.

@@ -1,70 +1,149 @@
-import { useEffect, useState, useCallback } from 'react'
-import { fetchLogs, fetchStats } from './api'
-import StatsBar from './components/StatsBar'
-import FilterBar from './components/FilterBar'
-import LogsTable from './components/LogsTable'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  fetchAlert,
+  fetchAlerts,
+  fetchAlertStats,
+  fetchMitreTechniques,
+  fetchRiskDistribution,
+  fetchTimeline,
+} from './api'
+import StatCards from './components/StatCards'
+import FilterBar, { EMPTY_FILTERS } from './components/FilterBar'
+import AlertsTable from './components/AlertsTable'
+import AlertDetail from './components/AlertDetail'
+import AnomalyTrendChart from './components/charts/AnomalyTrendChart'
+import RiskDistributionChart from './components/charts/RiskDistributionChart'
+import SeverityBreakdown from './components/charts/SeverityBreakdown'
+import MitreOverview from './components/charts/MitreOverview'
 import './App.css'
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 25
 
-const DEFAULT_FILTERS = {
-  anomaly: false,
-  minRiskScore: '',
-  auditType: '',
-  query: '',
+function rangeToFromTime(range) {
+  if (range === 'all') return ''
+  const now = Date.now()
+  const ms = { '24h': 864e5, '7d': 7 * 864e5, '30d': 30 * 864e5 }[range] ?? 30 * 864e5
+  return new Date(now - ms).toISOString()
 }
 
-function App() {
-  const [stats, setStats] = useState(null)
-  const [result, setResult] = useState({ total: 0, items: [] })
-  const [filters, setFilters] = useState(DEFAULT_FILTERS)
-  const [sort, setSort] = useState({ sortBy: 'timestamp', order: 'desc' })
-  const [page, setPage] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+function filtersToParams(filters, page) {
+  return {
+    size: PAGE_SIZE,
+    from: page * PAGE_SIZE,
+    severity: filters.severities,
+    min_risk_score: filters.minRiskScore,
+    max_risk_score: filters.maxRiskScore,
+    host: filters.host,
+    user: filters.user,
+    event_type: filters.eventType,
+    technique: filters.technique,
+    anomaly: filters.anomaly || undefined,
+    q: filters.q,
+    from_time: rangeToFromTime(filters.range),
+  }
+}
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+export default function App() {
+  const [filters, setFilters] = useState(EMPTY_FILTERS)
+  const [sort, setSort] = useState({ sortBy: 'risk_score', order: 'desc' })
+  const [page, setPage] = useState(0)
+
+  const [result, setResult] = useState({ total: 0, items: [] })
+  const [tableLoading, setTableLoading] = useState(true)
+  const [tableError, setTableError] = useState(null)
+
+  const [overview, setOverview] = useState({ stats: null, distribution: null, mitre: null })
+  const [overviewLoading, setOverviewLoading] = useState(true)
+  const [overviewError, setOverviewError] = useState(null)
+
+  const [trendRange, setTrendRange] = useState('all')
+  const [timeline, setTimeline] = useState(null)
+  const [timelineState, setTimelineState] = useState({ loading: true, error: null })
+
+  const [selected, setSelected] = useState(null)
+
+  const params = useMemo(() => filtersToParams(filters, page), [filters, page])
+
+  const loadTable = useCallback(async () => {
+    setTableLoading(true)
+    setTableError(null)
     try {
-      const [logsResult, statsResult] = await Promise.all([
-        fetchLogs({
-          size: PAGE_SIZE,
-          from: page * PAGE_SIZE,
-          sort_by: sort.sortBy,
-          order: sort.order,
-          anomaly: filters.anomaly || undefined,
-          min_risk_score: filters.minRiskScore,
-          audit_type: filters.auditType,
-          q: filters.query,
-        }),
-        fetchStats(),
-      ])
-      setResult(logsResult)
-      setStats(statsResult)
+      const data = await fetchAlerts({ ...params, sort_by: sort.sortBy, order: sort.order })
+      setResult(data)
     } catch (err) {
-      setError(err.message)
+      setTableError(err.message)
+      setResult({ total: 0, items: [] })
     } finally {
-      setLoading(false)
+      setTableLoading(false)
     }
-  }, [page, sort, filters])
+  }, [params, sort])
+
+  const loadOverview = useCallback(async () => {
+    setOverviewLoading(true)
+    setOverviewError(null)
+    try {
+      const [stats, distribution, mitre] = await Promise.all([
+        fetchAlertStats(),
+        fetchRiskDistribution(),
+        fetchMitreTechniques({ size: 12 }),
+      ])
+      setOverview({ stats, distribution, mitre: mitre.techniques || [] })
+    } catch (err) {
+      setOverviewError(err.message)
+    } finally {
+      setOverviewLoading(false)
+    }
+  }, [])
+
+  const loadTimeline = useCallback(async () => {
+    setTimelineState({ loading: true, error: null })
+    try {
+      const interval = trendRange === '24h' ? '1h' : trendRange === '7d' ? '3h' : '1d'
+      const data = await fetchTimeline({ interval, from_time: rangeToFromTime(trendRange) })
+      setTimeline(data)
+      setTimelineState({ loading: false, error: null })
+    } catch (err) {
+      setTimelineState({ loading: false, error: err.message })
+    }
+  }, [trendRange])
 
   useEffect(() => {
-    load()
-  }, [load])
+    loadTable()
+  }, [loadTable])
+  useEffect(() => {
+    loadOverview()
+  }, [loadOverview])
+  useEffect(() => {
+    loadTimeline()
+  }, [loadTimeline])
 
-  const handleFiltersChange = (next) => {
+  const updateFilters = (next) => {
     setFilters(next)
     setPage(0)
   }
-
-  const handleSort = (sortKey) => {
-    setSort((prev) =>
-      prev.sortBy === sortKey
-        ? { sortBy: sortKey, order: prev.order === 'asc' ? 'desc' : 'asc' }
-        : { sortBy: sortKey, order: 'desc' },
-    )
+  const resetFilters = () => {
+    setFilters(EMPTY_FILTERS)
     setPage(0)
+  }
+  const handleSort = (key) => {
+    setSort((p) => (p.sortBy === key ? { sortBy: key, order: p.order === 'asc' ? 'desc' : 'asc' } : { sortBy: key, order: 'desc' }))
+    setPage(0)
+  }
+
+  const openAlert = async (alert) => {
+    setSelected(alert)
+    try {
+      const full = await fetchAlert(alert.id)
+      setSelected(full)
+    } catch {
+      /* keep the summary row we already have */
+    }
+  }
+
+  const refreshAll = () => {
+    loadTable()
+    loadOverview()
+    loadTimeline()
   }
 
   const totalPages = Math.max(1, Math.ceil(result.total / PAGE_SIZE))
@@ -74,51 +153,93 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Panoptic</h1>
-        <p>ML-enhanced audit log anomaly dashboard</p>
+        <div>
+          <h1>Panoptic</h1>
+          <p>Security analytics · Linux auditd anomaly detection</p>
+        </div>
       </header>
 
-      {error && <div className="error-banner">{error}</div>}
-
-      <StatsBar stats={stats} />
-
-      <FilterBar
-        filters={filters}
-        onChange={handleFiltersChange}
-        onRefresh={load}
-        loading={loading}
-      />
-
-      {loading && result.items.length === 0 ? (
-        <div className="logs-table-wrap">
-          <div className="state-message">Loading logs…</div>
-        </div>
-      ) : (
-        <>
-          <LogsTable items={result.items} sort={sort} onSort={handleSort} />
-
-          <div className="pagination">
-            <span>
-              {rangeStart}-{rangeEnd} of {result.total.toLocaleString()}
-            </span>
-            <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
-              Previous
-            </button>
-            <span>
-              Page {page + 1} of {totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page + 1 >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </button>
-          </div>
-        </>
+      {(tableError || overviewError) && (
+        <div className="error-banner">{tableError || overviewError}</div>
       )}
+
+      <StatCards stats={overview.stats} />
+
+      <div className="chart-grid">
+        <AnomalyTrendChart
+          timeline={timeline}
+          loading={timelineState.loading}
+          error={timelineState.error}
+          range={trendRange}
+          onRangeChange={setTrendRange}
+        />
+        <RiskDistributionChart
+          distribution={overview.distribution}
+          loading={overviewLoading}
+          error={overviewError}
+          onSelectBand={(sev) => updateFilters({ ...filters, severities: [sev] })}
+        />
+        <SeverityBreakdown
+          bySeverity={overview.stats?.by_severity}
+          loading={overviewLoading}
+          error={overviewError}
+          onSelect={(sev) => updateFilters({ ...filters, severities: [sev] })}
+        />
+        <MitreOverview
+          techniques={overview.mitre}
+          loading={overviewLoading}
+          error={overviewError}
+          activeTechnique={filters.technique}
+          onSelect={(tid) => updateFilters({ ...filters, technique: tid })}
+        />
+      </div>
+
+      <div className="alert-center">
+        <div className="alert-center-head">
+          <h2>Alert center</h2>
+          <span className="alert-count">{result.total.toLocaleString()} matching</span>
+        </div>
+
+        <FilterBar
+          filters={filters}
+          onChange={updateFilters}
+          onReset={resetFilters}
+          onRefresh={refreshAll}
+          loading={tableLoading}
+        />
+
+        {tableLoading && result.items.length === 0 ? (
+          <div className="alerts-wrap">
+            <div className="state-message">Loading alerts…</div>
+          </div>
+        ) : (
+          <>
+            <AlertsTable
+              alerts={result.items}
+              sort={sort}
+              onSort={handleSort}
+              selectedId={selected?.id}
+              onSelect={openAlert}
+            />
+            <div className="pagination">
+              <span>
+                {rangeStart}–{rangeEnd} of {result.total.toLocaleString()}
+              </span>
+              <button type="button" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+                Previous
+              </button>
+              <span>
+                Page {page + 1} of {totalPages}
+              </span>
+              <button type="button" disabled={page + 1 >= totalPages} onClick={() => setPage((p) => p + 1)}>
+                Next
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {selected && <AlertDetail alert={selected} onClose={() => setSelected(null)} />}
     </div>
   )
 }
-
-export default App
