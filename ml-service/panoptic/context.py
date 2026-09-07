@@ -410,7 +410,16 @@ def build_context(
     process = log.get("process", {}) if isinstance(log.get("process"), dict) else {}
     user = log.get("user", {}) if isinstance(log.get("user"), dict) else {}
 
-    action = _as_str(event.get("action")) or _as_str(auditd_log.get("SYSCALL")) or _as_str(kv.get("syscall"))
+    # Prefer the concrete syscall name (execve, openat, ...) over the auditd
+    # module's generic event.action == "syscall".
+    _event_action = _as_str(event.get("action"))
+    if _event_action == "syscall":
+        _event_action = None
+    action = (
+        _as_str(auditd_log.get("SYSCALL"))
+        or _as_str(kv.get("SYSCALL"))
+        or _event_action
+    )
     record_type = (
         _first(
             _as_str(auditd_log.get("record_type")),
